@@ -1,0 +1,31 @@
+# Entorno virtual de Python
+venv/
+.venv/
+env/
+*.env
+
+# Archivos de caché de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Almacenes de datos y modelos descargados
+/data_storage/
+/models/
+
+# Archivos de IDEs y editores
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Caché de sentence-transformers
+.cache/
+
+# Archivos de instalación de pip
+*.egg-info/
+pip-wheel-metadata/
+
+# Logs
+*.log
