@@ -10,23 +10,25 @@ const FileUpload = () => {
   
   const [embeddingModels, setEmbeddingModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
+  
+  // --- NUEVOS ESTADOS PARA CHUNKING ---
+  const [chunkSize, setChunkSize] = useState(1000);
+  const [chunkOverlap, setChunkOverlap] = useState(200);
 
-  // Este 'useEffect' se ejecuta una sola vez cuando el componente se carga.
-  // Su propósito es llamar a nuestra API para obtener la lista de modelos.
   useEffect(() => {
     const fetchModels = async () => {
       try {
         const response = await axios.get('http://127.0.0.1:8000/rag/supported_embedding_models');
         setEmbeddingModels(response.data);
         if (response.data.length > 0) {
-          setSelectedModel(response.data[0]); // Seleccionamos el primer modelo por defecto
+          setSelectedModel(response.data[0]);
         }
       } catch (err) {
         setError('Error: No se pudo conectar con la API para cargar los modelos.');
       }
     };
     fetchModels();
-  }, []); // El array vacío asegura que se ejecute solo al montar el componente.
+  }, []);
 
   const handleFileChange = (event) => {
     setFile(event.target.files[0]);
@@ -44,6 +46,9 @@ const FileUpload = () => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('embedding_model', selectedModel);
+    // --- AÑADIMOS LOS NUEVOS VALORES AL FORMDATA ---
+    formData.append('chunk_size', chunkSize);
+    formData.append('chunk_overlap', chunkOverlap);
 
     setIsLoading(true);
     setMessage('');
@@ -51,11 +56,10 @@ const FileUpload = () => {
 
     try {
       const response = await axios.post('http://127.0.0.1:8000/rag/upload_and_process', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
-      setMessage(response.data.message);
+      const config = response.data.config;
+      setMessage(`Éxito! Modelo: ${config.embedding_model}, Tamaño Chunk: ${config.chunk_size}, Solapamiento: ${config.chunk_overlap}.`);
     } catch (err) {
       setError(err.response?.data?.detail || 'Ocurrió un error al procesar el archivo.');
     } finally {
@@ -69,16 +73,19 @@ const FileUpload = () => {
       <form onSubmit={handleSubmit}>
         <div className="config-item">
           <label htmlFor="model-select">Modelo de Embedding:</label>
-          <select 
-            id="model-select" 
-            value={selectedModel} 
-            onChange={(e) => setSelectedModel(e.target.value)}
-            disabled={embeddingModels.length === 0}
-          >
-            {embeddingModels.map(model => (
-              <option key={model} value={model}>{model}</option>
-            ))}
+          <select id="model-select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} disabled={embeddingModels.length === 0}>
+            {embeddingModels.map(model => (<option key={model} value={model}>{model}</option>))}
           </select>
+        </div>
+
+        {/* --- NUEVOS CAMPOS DE CHUNKING --- */}
+        <div className="config-item">
+          <label htmlFor="chunk-size">Tamaño de Chunk:</label>
+          <input id="chunk-size" type="number" value={chunkSize} onChange={(e) => setChunkSize(Number(e.target.value))} />
+        </div>
+        <div className="config-item">
+          <label htmlFor="chunk-overlap">Solapamiento:</label>
+          <input id="chunk-overlap" type="number" value={chunkOverlap} onChange={(e) => setChunkOverlap(Number(e.target.value))} />
         </div>
 
         <div className="config-item">

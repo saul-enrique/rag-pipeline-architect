@@ -16,8 +16,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VECTOR_STORE_PATH = str(PROJECT_ROOT / "data_storage" / "vector_store")
 SOURCE_DOCS_PATH = str(PROJECT_ROOT / "data_storage" / "source_documents")
 
-# --- Lista de modelos soportados (CORREGIDA) ---
-# Ahora incluimos el prefijo de la organización 'BAAI/' para los modelos BGE.
 SUPPORTED_EMBEDDING_MODELS = [
     "all-MiniLM-L6-v2",
     "BAAI/bge-base-en-v1.5",
@@ -27,13 +25,22 @@ SUPPORTED_EMBEDDING_MODELS = [
 DEFAULT_EMBEDDING_MODEL = SUPPORTED_EMBEDDING_MODELS[0]
 DEFAULT_LLM_MODEL = "llama3"
 
-def process_and_store_embeddings(file_path: str, embedding_model: str):
-    """Orquesta la carga, división y almacenamiento de un documento."""
+# --- MODIFICAMOS LA FUNCIÓN DE PROCESAMIENTO ---
+def process_and_store_embeddings(
+    file_path: str,
+    embedding_model: str,
+    chunk_size: int,
+    chunk_overlap: int
+):
+    """Orquesta la carga, división y almacenamiento usando la configuración proporcionada."""
     if embedding_model not in SUPPORTED_EMBEDDING_MODELS:
         print(f"ERROR: Modelo de embedding '{embedding_model}' no soportado.")
         return False
         
-    print(f"INFO: Procesando {file_path} con el modelo de embedding {embedding_model}.")
+    print(f"INFO: Procesando {file_path} con la configuración:")
+    print(f"  - Modelo Embedding: {embedding_model}")
+    print(f"  - Tamaño de Chunk: {chunk_size}")
+    print(f"  - Solapamiento: {chunk_overlap}")
     
     loader = PyPDFLoader(file_path)
     docs = loader.load()
@@ -41,8 +48,13 @@ def process_and_store_embeddings(file_path: str, embedding_model: str):
         print("ERROR: No se pudo cargar el documento.")
         return False
     
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    # Usamos los nuevos parámetros aquí
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap
+    )
     chunks = text_splitter.split_documents(docs)
+    print(f"INFO: Documento dividido en {len(chunks)} chunks.")
     
     embeddings = HuggingFaceEmbeddings(model_name=embedding_model, model_kwargs={'device': 'cpu'})
     
@@ -56,31 +68,17 @@ def process_and_store_embeddings(file_path: str, embedding_model: str):
     print("INFO: Índice vectorial creado/actualizado con éxito.")
     return True
 
+# --- (La función get_rag_chain no necesita cambios por ahora) ---
 def get_rag_chain(llm_model: str = DEFAULT_LLM_MODEL, k_chunks: int = 3):
     """Prepara y devuelve una cadena RAG lista para ser invocada."""
+    # ... (código existente sin cambios) ...
     if not os.path.exists(VECTOR_STORE_PATH):
         return None, None
-        
-    # NOTA: Para la recuperación siempre usamos el modelo por defecto con el que se creó el índice más reciente.
-    # En un sistema más avanzado, guardaríamos qué modelo se usó para cada índice.
     embeddings = HuggingFaceEmbeddings(model_name=DEFAULT_EMBEDDING_MODEL, model_kwargs={'device': 'cpu'})
     vector_store = Chroma(persist_directory=VECTOR_STORE_PATH, embedding_function=embeddings)
     retriever = vector_store.as_retriever(search_kwargs={'k': k_chunks})
-    
-    template = """
-    Eres un asistente que responde preguntas basándose únicamente en el contexto proporcionado.
-    Contexto: {context}
-    Pregunta: {question}
-    Respuesta:
-    """
+    template = "Eres un asistente que responde preguntas basándose únicamente en el contexto proporcionado.\nContexto: {context}\nPregunta: {question}\nRespuesta:"
     prompt = PromptTemplate.from_template(template)
     llm = Ollama(model=llm_model)
-
-    rag_chain = (
-        {"context": retriever, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
-    
+    rag_chain = ({"context": retriever, "question": RunnablePassthrough()} | prompt | llm | StrOutputParser())
     return rag_chain, retriever
