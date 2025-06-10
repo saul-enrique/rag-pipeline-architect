@@ -1,43 +1,86 @@
 # backend/api/endpoints/rag.py
-import os
 import shutil
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from pydantic import BaseModel
 from pathlib import Path
 
-# Creamos un 'router' para nuestros endpoints.
-# Es como una mini-aplicación FastAPI que podemos incluir en la principal.
+# Importamos las funciones específicas de nuestro motor
+from backend.core.engine import process_and_store_embeddings, get_rag_chain, SOURCE_DOCS_PATH
+
 router = APIRouter()
 
-# Definimos la ruta base donde se guardarán los documentos.
-# Usamos Path para manejar rutas de forma más segura y compatible entre OS.
-# OJO: Esta ruta es relativa a la raíz del proyecto.
-SOURCE_DOCS_PATH = Path("data_storage/source_documents")
+# --- Modelos de Datos (Pydantic) ---
+# Esto ayuda a FastAPI a validar los datos de entrada y a generar la documentación.
 
-@router.post("/upload", status_code=201)
-def upload_document(file: UploadFile = File(...)):
-    """
-    Endpoint para subir un archivo. Por ahora, solo acepta PDFs.
-    """
-    # Asegurarnos de que el directorio de destino existe.
-    SOURCE_DOCS_PATH.mkdir(parents=True, exist_ok=True)
+class UploadResponse(BaseModel):
+    message: str
+    filename: str
 
-    # Validar que el archivo es un PDF
+class QueryRequest(BaseModel):
+    question: str
+
+class Chunk(BaseModel):
+    content: str
+    metadata: dict
+
+class QueryResponse(BaseModel):
+    llm_answer: str
+    retrieved_chunks: list[Chunk]
+
+
+# --- Endpoints ---
+
+@router.post("/upload_and_process", response_model=UploadResponse)
+def upload_and_process_document(file: UploadFile = File(...)):
+    """Sube un PDF, lo guarda y procesa para crear/actualizar el índice vectorial."""
+    source_path = Path(SOURCE_DOCS_PATH)
+    source_path.mkdir(parents=True, exist_ok=True)
+
     if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="El archivo debe ser un PDF.")
+        raise HTTPException(status_code=400, detail="Formato de archivo inválido. Solo se aceptan PDF.")
 
-    # Definir la ruta completa donde se guardará el archivo.
-    file_path = SOURCE_DOCS_PATH / file.filename
+    file_path = source_path / file.filename
     
     try:
-        # Guardar el archivo en el disco.
         with file_path.open("wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
-        return {
-            "message": "Archivo subido con éxito.",
-            "filename": file.filename,
-            "path": str(file_path)
-        }
     except Exception as e:
-        # Si algo sale mal, lanzamos un error del servidor.
-        raise HTTPException(status_code=500, detail=f"No se pudo guardar el archivo: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al guardar el archivo: {e}")
+
+    try:
+        if not process_and_store_embeddings(str(file_path)):
+            raise HTTPException(status_code=500, detail="El motor RAG no pudo procesar el documento.")
+        
+        return UploadResponse(
+            message="Archivo subido y procesado con éxito.",
+            filename=file.filename
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error durante el procesamiento: {e}")
+
+
+@router.post("/query", response_model=QueryResponse)
+def query_document(request: QueryRequest):
+    """Recibe una pregunta y devuelve la respuesta del LLM y los chunks recuperados."""
+    rag_chain, retriever = get_rag_chain()
+    
+    if rag_chain is None:
+        raise HTTPException(status_code=404, detail="Índice no encontrado. Por favor, suba y procese un documento primero.")
+        
+    try:
+        # 1. Obtener la respuesta del LLM
+        llm_answer = rag_chain.invoke(request.question)
+        
+        # 2. Obtener los chunks recuperados para esa pregunta
+        retrieved_docs = retriever.invoke(request.question)
+        retrieved_chunks = [
+            Chunk(content=doc.page_content, metadata=doc.metadata) for doc in retrieved_docs
+        ]
+        
+        return QueryResponse(
+            llm_answer=llm_answer,
+            retrieved_chunks=retrieved_chunks
+        )
+    except Exception as e:
+        # Esto capturará el error si el LLM se cuelga
+        raise HTTPException(status_code=500, detail=f"Error al procesar la consulta con el LLM: {e}")
