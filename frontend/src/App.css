@@ -1,0 +1,81 @@
+/* frontend/src/App.css */
+body {
+  font-family: sans-serif;
+  background-color: #242424;
+  color: rgba(255, 255, 255, 0.87);
+  padding: 2rem;
+}
+
+.App {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.file-upload-container, .chat-container {
+  background-color: #333;
+  padding: 1.5rem;
+  border-radius: 8px;
+  margin-top: 2rem;
+  border: 1px solid #444;
+}
+
+input[type="file"] {
+  margin-right: 1rem;
+}
+
+button {
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:disabled {
+  background-color: #555;
+  cursor: not-allowed;
+}
+
+.success-message {
+  color: #4caf50;
+  margin-top: 1rem;
+}
+
+.error-message {
+  color: #f44336;
+  margin-top: 1rem;
+}
+
+/* ... (estilos existentes) ... */
+
+/* --- Nuevos estilos para el chat --- */
+.results-container {
+  margin-top: 2rem;
+  text-align: left;
+}
+
+.llm-answer {
+  background-color: #2a2a2a;
+  padding: 1rem;
+  border-radius: 5px;
+  white-space: pre-wrap; /* Mantiene los saltos de línea de la respuesta */
+}
+
+.chunks-container {
+  margin-top: 1rem;
+}
+
+.chunk {
+  background-color: #404040;
+  padding: 0.8rem;
+  border-radius: 5px;
+  margin-bottom: 1rem;
+  font-size: 0.9em;
+  border-left: 3px solid #646cff;
+}
