@@ -5,23 +5,33 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from pathlib import Path
 
+# Importamos solo lo que necesitamos del motor
 from backend.core.engine import (
     process_and_store_embeddings, 
     get_rag_chain, 
-    SUPPORTED_EMBEDDING_MODELS, 
-    SOURCE_DOCS_PATH
+    SUPPORTED_EMBEDDING_MODELS
 )
+
+# --- CONSTANTE DEFINIDA LOCALMENTE ---
+# Definimos la ruta aquí, ya que es una responsabilidad de la API.
+SOURCE_DOCS_PATH = Path("data_storage/source_documents")
 
 router = APIRouter()
 
 # --- Modelos Pydantic ---
-class UploadResponse(BaseModel):
-    message: str
-    filename: str
-    config: dict
+class PipelineConfig(BaseModel):
+    embedding_model: str
+    chunk_size: int
+    chunk_overlap: int
 
 class QueryRequest(BaseModel):
     question: str
+    config: PipelineConfig
+
+class UploadResponse(BaseModel):
+    message: str
+    filename: str
+    config: PipelineConfig
 
 class Chunk(BaseModel):
     content: str
@@ -36,7 +46,6 @@ class QueryResponse(BaseModel):
 def get_supported_embedding_models():
     return SUPPORTED_EMBEDDING_MODELS
 
-# --- ENDPOINT MODIFICADO ---
 @router.post("/upload_and_process", response_model=UploadResponse)
 def upload_and_process_document(
     chunk_size: int = Form(default=1000),
@@ -44,60 +53,43 @@ def upload_and_process_document(
     embedding_model: str = Form(default=SUPPORTED_EMBEDDING_MODELS[0]),
     file: UploadFile = File(...)
 ):
-    """
-    Sube un PDF y lo procesa usando la configuración de chunking y embedding especificada.
-    """
     if embedding_model not in SUPPORTED_EMBEDDING_MODELS:
-        raise HTTPException(status_code=400, detail="El modelo de embedding no es soportado.")
+        raise HTTPException(status_code=400, detail="Modelo no soportado.")
 
-    source_path = Path(SOURCE_DOCS_PATH)
-    source_path.mkdir(parents=True, exist_ok=True)
+    config = PipelineConfig(embedding_model=embedding_model, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+    # Usamos la constante local SOURCE_DOCS_PATH
+    SOURCE_DOCS_PATH.mkdir(parents=True, exist_ok=True)
 
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Formato de archivo inválido. Solo se aceptan PDF.")
 
-    file_path = source_path / file.filename
+    file_path = SOURCE_DOCS_PATH / file.filename
     
     try:
         with file_path.open("wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al guardar el archivo: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al guardar archivo: {e}")
 
     try:
-        # Pasamos los nuevos parámetros al motor
-        process_and_store_embeddings(
-            file_path=str(file_path),
-            embedding_model=embedding_model,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
-        )
-        
-        config = {
-            "embedding_model": embedding_model,
-            "chunk_size": chunk_size,
-            "chunk_overlap": chunk_overlap
-        }
-        
-        return UploadResponse(
-            message=f"Archivo procesado con éxito.",
-            filename=file.filename,
-            config=config
-        )
+        process_and_store_embeddings(file_path=str(file_path), config=config.model_dump())
+        return UploadResponse(message="Archivo procesado.", filename=file.filename, config=config)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error durante el procesamiento: {e}")
+        # Devolvemos el mensaje de error real para facilitar la depuración
+        raise HTTPException(status_code=500, detail=f"Error durante el procesamiento: {str(e)}")
 
-# --- (El endpoint de query no cambia) ---
 @router.post("/query", response_model=QueryResponse)
 def query_document(request: QueryRequest):
-    # ... (código existente sin cambios) ...
-    rag_chain, retriever = get_rag_chain()
+    rag_chain, retriever = get_rag_chain(config=request.config.model_dump())
+    
     if rag_chain is None:
-        raise HTTPException(status_code=404, detail="Índice no encontrado. Por favor, suba y procese un documento primero.")
+        raise HTTPException(status_code=404, detail="Índice para esta configuración no encontrado. Procese un documento con esta configuración primero.")
+        
     try:
         llm_answer = rag_chain.invoke(request.question)
         retrieved_docs = retriever.invoke(request.question)
         retrieved_chunks = [Chunk(content=doc.page_content, metadata=doc.metadata) for doc in retrieved_docs]
         return QueryResponse(llm_answer=llm_answer, retrieved_chunks=retrieved_chunks)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al procesar la consulta con el LLM: {e}")
+        raise HTTPException(status_code=500, detail=f"Error en consulta: {str(e)}")

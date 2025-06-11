@@ -1,6 +1,7 @@
 # backend/core/engine.py
 
 import os
+import shutil
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -13,8 +14,7 @@ from pathlib import Path
 
 # --- CONSTANTES ---
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-VECTOR_STORE_PATH = str(PROJECT_ROOT / "data_storage" / "vector_store")
-SOURCE_DOCS_PATH = str(PROJECT_ROOT / "data_storage" / "source_documents")
+BASE_VECTOR_STORE_PATH = PROJECT_ROOT / "data_storage" / "vector_stores" # Cambiamos a un directorio base
 
 SUPPORTED_EMBEDDING_MODELS = [
     "all-MiniLM-L6-v2",
@@ -22,63 +22,66 @@ SUPPORTED_EMBEDDING_MODELS = [
     "BAAI/bge-small-en-v1.5"
 ]
 
-DEFAULT_EMBEDDING_MODEL = SUPPORTED_EMBEDDING_MODELS[0]
 DEFAULT_LLM_MODEL = "llama3"
 
-# --- MODIFICAMOS LA FUNCIÓN DE PROCESAMIENTO ---
+# --- NUEVA FUNCIÓN HELPER ---
+def get_vector_store_path(config: dict) -> str:
+    """Genera una ruta única para el índice basada en la configuración."""
+    model_name_slug = config['embedding_model'].replace('/', '_') # Reemplaza '/' para nombres de carpeta válidos
+    dir_name = f"{model_name_slug}_chunk-{config['chunk_size']}_overlap-{config['chunk_overlap']}"
+    return str(BASE_VECTOR_STORE_PATH / dir_name)
+
+# --- FUNCIÓN DE PROCESAMIENTO MODIFICADA ---
 def process_and_store_embeddings(
     file_path: str,
-    embedding_model: str,
-    chunk_size: int,
-    chunk_overlap: int
+    config: dict
 ):
-    """Orquesta la carga, división y almacenamiento usando la configuración proporcionada."""
+    """Orquesta la carga, división y almacenamiento usando una ruta de índice dinámica."""
+    embedding_model = config['embedding_model']
+    chunk_size = config['chunk_size']
+    chunk_overlap = config['chunk_overlap']
+
     if embedding_model not in SUPPORTED_EMBEDDING_MODELS:
-        print(f"ERROR: Modelo de embedding '{embedding_model}' no soportado.")
         return False
-        
-    print(f"INFO: Procesando {file_path} con la configuración:")
-    print(f"  - Modelo Embedding: {embedding_model}")
-    print(f"  - Tamaño de Chunk: {chunk_size}")
-    print(f"  - Solapamiento: {chunk_overlap}")
-    
+
+    vector_store_path = get_vector_store_path(config)
+    print(f"INFO: Usando ruta de índice: {vector_store_path}")
+
+    # Si la carpeta del índice ya existe, la eliminamos para reconstruirla.
+    if os.path.exists(vector_store_path):
+        print("INFO: Índice existente encontrado. Reconstruyendo...")
+        shutil.rmtree(vector_store_path)
+
+    # ... (el resto de la lógica de procesamiento no cambia) ...
     loader = PyPDFLoader(file_path)
     docs = loader.load()
-    if not docs:
-        print("ERROR: No se pudo cargar el documento.")
-        return False
-    
-    # Usamos los nuevos parámetros aquí
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap
-    )
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     chunks = text_splitter.split_documents(docs)
-    print(f"INFO: Documento dividido en {len(chunks)} chunks.")
-    
     embeddings = HuggingFaceEmbeddings(model_name=embedding_model, model_kwargs={'device': 'cpu'})
     
-    os.makedirs(VECTOR_STORE_PATH, exist_ok=True)
-    
-    vector_store = Chroma.from_documents(
+    Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
-        persist_directory=VECTOR_STORE_PATH
+        persist_directory=vector_store_path
     )
-    print("INFO: Índice vectorial creado/actualizado con éxito.")
+    print("INFO: Índice vectorial creado con éxito.")
     return True
 
-# --- (La función get_rag_chain no necesita cambios por ahora) ---
-def get_rag_chain(llm_model: str = DEFAULT_LLM_MODEL, k_chunks: int = 3):
-    """Prepara y devuelve una cadena RAG lista para ser invocada."""
-    # ... (código existente sin cambios) ...
-    if not os.path.exists(VECTOR_STORE_PATH):
+# --- FUNCIÓN DE CONSULTA MODIFICADA ---
+def get_rag_chain(config: dict, llm_model: str = DEFAULT_LLM_MODEL, k_chunks: int = 3):
+    """Prepara la cadena RAG usando la ruta de índice correcta."""
+    vector_store_path = get_vector_store_path(config)
+    
+    if not os.path.exists(vector_store_path):
         return None, None
-    embeddings = HuggingFaceEmbeddings(model_name=DEFAULT_EMBEDDING_MODEL, model_kwargs={'device': 'cpu'})
-    vector_store = Chroma(persist_directory=VECTOR_STORE_PATH, embedding_function=embeddings)
+        
+    embeddings = HuggingFaceEmbeddings(model_name=config['embedding_model'], model_kwargs={'device': 'cpu'})
+    vector_store = Chroma(persist_directory=vector_store_path, embedding_function=embeddings)
     retriever = vector_store.as_retriever(search_kwargs={'k': k_chunks})
+    
     template = "Eres un asistente que responde preguntas basándose únicamente en el contexto proporcionado.\nContexto: {context}\nPregunta: {question}\nRespuesta:"
     prompt = PromptTemplate.from_template(template)
     llm = Ollama(model=llm_model)
     rag_chain = ({"context": retriever, "question": RunnablePassthrough()} | prompt | llm | StrOutputParser())
+    
     return rag_chain, retriever

@@ -1,34 +1,12 @@
 // frontend/src/components/FileUpload.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
 
-const FileUpload = () => {
+const FileUpload = ({ pipelineConfig, setPipelineConfig, supportedModels }) => {
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  
-  const [embeddingModels, setEmbeddingModels] = useState([]);
-  const [selectedModel, setSelectedModel] = useState('');
-  
-  // --- NUEVOS ESTADOS PARA CHUNKING ---
-  const [chunkSize, setChunkSize] = useState(1000);
-  const [chunkOverlap, setChunkOverlap] = useState(200);
-
-  useEffect(() => {
-    const fetchModels = async () => {
-      try {
-        const response = await axios.get('http://127.0.0.1:8000/rag/supported_embedding_models');
-        setEmbeddingModels(response.data);
-        if (response.data.length > 0) {
-          setSelectedModel(response.data[0]);
-        }
-      } catch (err) {
-        setError('Error: No se pudo conectar con la API para cargar los modelos.');
-      }
-    };
-    fetchModels();
-  }, []);
 
   const handleFileChange = (event) => {
     setFile(event.target.files[0]);
@@ -45,10 +23,10 @@ const FileUpload = () => {
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('embedding_model', selectedModel);
-    // --- AÑADIMOS LOS NUEVOS VALORES AL FORMDATA ---
-    formData.append('chunk_size', chunkSize);
-    formData.append('chunk_overlap', chunkOverlap);
+    // Enviamos los datos con los nombres correctos (snake_case)
+    formData.append('embedding_model', pipelineConfig.embedding_model);
+    formData.append('chunk_size', pipelineConfig.chunk_size);
+    formData.append('chunk_overlap', pipelineConfig.chunk_overlap);
 
     setIsLoading(true);
     setMessage('');
@@ -67,32 +45,37 @@ const FileUpload = () => {
     }
   };
 
+  const handleConfigChange = (e) => {
+    const { name, value } = e.target;
+    setPipelineConfig(prev => ({
+      ...prev,
+      [name]: value // El 'name' del input ya es snake_case
+    }));
+  };
+
   return (
     <div className="file-upload-container">
       <h2>1. Configurar Pipeline y Cargar Documento</h2>
       <form onSubmit={handleSubmit}>
+        {/* --- CORRECCIÓN CLAVE: name y value usan snake_case --- */}
         <div className="config-item">
-          <label htmlFor="model-select">Modelo de Embedding:</label>
-          <select id="model-select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} disabled={embeddingModels.length === 0}>
-            {embeddingModels.map(model => (<option key={model} value={model}>{model}</option>))}
+          <label htmlFor="embedding_model">Modelo de Embedding:</label>
+          <select id="embedding_model" name="embedding_model" value={pipelineConfig.embedding_model} onChange={handleConfigChange}>
+            {supportedModels.map(model => (<option key={model} value={model}>{model}</option>))}
           </select>
         </div>
-
-        {/* --- NUEVOS CAMPOS DE CHUNKING --- */}
         <div className="config-item">
-          <label htmlFor="chunk-size">Tamaño de Chunk:</label>
-          <input id="chunk-size" type="number" value={chunkSize} onChange={(e) => setChunkSize(Number(e.target.value))} />
+          <label htmlFor="chunk_size">Tamaño de Chunk:</label>
+          <input id="chunk_size" name="chunk_size" type="number" value={pipelineConfig.chunk_size} onChange={handleConfigChange} />
         </div>
         <div className="config-item">
-          <label htmlFor="chunk-overlap">Solapamiento:</label>
-          <input id="chunk-overlap" type="number" value={chunkOverlap} onChange={(e) => setChunkOverlap(Number(e.target.value))} />
+          <label htmlFor="chunk_overlap">Solapamiento:</label>
+          <input id="chunk_overlap" name="chunk_overlap" type="number" value={pipelineConfig.chunk_overlap} onChange={handleConfigChange} />
         </div>
-
         <div className="config-item">
           <label htmlFor="file-input">Archivo PDF:</label>
           <input id="file-input" type="file" accept=".pdf" onChange={handleFileChange} />
         </div>
-        
         <button type="submit" disabled={isLoading || !file}>
           {isLoading ? 'Procesando...' : 'Subir y Procesar'}
         </button>
